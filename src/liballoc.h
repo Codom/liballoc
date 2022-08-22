@@ -27,9 +27,9 @@ typedef struct {
 
 // Here is the interface to la_alloc_callbacks_t structs
 // that makes it a bit less strange to use.
-extern void* la_malloc(la_alloc_callbacks_t callbacks, size_t size);
-extern void* la_realloc(la_alloc_callbacks_t callbacks, void* ptr, size_t size);
-extern void la_free(la_alloc_callbacks_t callbacks, void* ptr);
+void* la_malloc(la_alloc_callbacks_t callbacks, size_t size);
+void* la_realloc(la_alloc_callbacks_t callbacks, void* ptr, size_t size);
+void la_free(la_alloc_callbacks_t callbacks, void* ptr);
 
 /*
  * We include a global definition to the libc allocator so
@@ -37,7 +37,7 @@ extern void la_free(la_alloc_callbacks_t callbacks, void* ptr);
  * other managed heaps.
  */
 #ifdef INCLUDE_LIBC
-extern la_alloc_callbacks_t la_libc_allocator;
+la_alloc_callbacks_t la_libc_allocator;
 #endif
 
 /*
@@ -55,9 +55,11 @@ la_alloc_callbacks_t la_linear_allocator(la_alloc_callbacks_t root_allocator, si
 // Implementation below
 #ifdef LIBALLOC_DEF
 
+#ifdef DEBUG
+// TODO Figure out a nice way to annotate allocs and frees...
+#else
 void* la_malloc(la_alloc_callbacks_t callbacks, size_t size) {
     return callbacks.malloc(callbacks.heap, size);
-
 }
 void* la_realloc(la_alloc_callbacks_t callbacks, void* ptr, size_t size) {
     return callbacks.realloc(callbacks.heap, ptr, size);
@@ -65,6 +67,7 @@ void* la_realloc(la_alloc_callbacks_t callbacks, void* ptr, size_t size) {
 void la_free(la_alloc_callbacks_t callbacks, void* ptr) {
     callbacks.free(callbacks.heap, ptr);
 }
+#endif
 
 #ifdef INCLUDE_LIBC
 #include <stdlib.h>
@@ -120,7 +123,7 @@ typedef struct {
     size_t capacity;
 } la_linear_heap_t;
 
-void* la_linear_allocator_malloc(void* _heap, size_t size) {
+void* la_linear_malloc(void* _heap, size_t size) {
     la_linear_heap_t *heap = (la_linear_heap_t*) _heap;
 
     // Fail if it cannot fit
@@ -134,14 +137,14 @@ void* la_linear_allocator_malloc(void* _heap, size_t size) {
     return ret;
 }
 
-// Linear allocators cannot free and doesn't keep around allocation
-// state, so the following should always fail. Instead use the heap
-// free function.
-void* la_linear_allocator_realloc(void* _heap, void* _ptr, size_t size) {
-    return NULL;
+// For linear allocators, the realloc function just calls it's
+// malloc function. This is due to the fact that there is no
+// ability to free individual allocations.
+void* la_linear_realloc(void* _heap, void* _ptr, size_t size) {
+    return la_linear_malloc(_heap, size);
 }
 
-void la_linear_allocator_free_fn(void* _heap, void* _ptr) {
+void la_linear_free_fn(void* _heap, void* _ptr) {
     return;
 }
 
@@ -154,15 +157,15 @@ la_alloc_callbacks_t la_linear_allocator(la_alloc_callbacks_t root_allocator, si
     lin_heap->capacity = heap_size;
 
     la_alloc_callbacks_t ret = {
-        .malloc = la_linear_allocator_malloc,
-        .realloc = la_linear_allocator_realloc,
-        .free = la_linear_allocator_free_fn,
+        .malloc = la_linear_malloc,
+        .realloc = la_linear_realloc,
+        .free = la_linear_free_fn,
         .heap = heap,
     };
     return ret;
 }
 
-void la_linear_allocator_free(la_alloc_callbacks_t *callbacks) {
+void la_linear_deinit(la_alloc_callbacks_t *callbacks) {
     la_linear_heap_t* lin_heap = callbacks->heap;
     la_free(lin_heap->parent_alloc, callbacks->heap);
 }

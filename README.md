@@ -12,7 +12,16 @@ applications needing predictable icache behavior, it is
 ideal for applications needing something better than the
 libc allocator.
 
-Only a simple linear allocator is implemented, mostly
-just as a proof of concept. A leak-checking
-free-list allocator and dynamically resizing arena allocators
-could be implemented in this, and may be in the future.
+Only a simple linear allocator and a dynamic arena allocator
+are implemented as a proof of concept. A leak-checking
+free-list allocator is on the todo list.
+
+# Testing
+The header is tested with a simple test program. The makefile
+specifies this file should be built with the ubsan and addressan
+enabled to ensure that these allocators don't rely on ub and
+also don't produce memory leaks when used properly.
+
+Simply ./run_tests.sh. Success output is only a printout of
+the coverage report, failure should print out the line of the
+test failure. Sanitizer output is also considered a failure.

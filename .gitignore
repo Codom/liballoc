@@ -1,0 +1,5 @@
+liballoc.h.gcov
+test
+test-test_main.gcda
+test-test_main.gcno
+test_main.c.gcov

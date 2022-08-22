@@ -7,7 +7,7 @@ SAFETY=-fsanitize=address,undefined
 
 # Tests are inherently testable binaries with all of the compiler
 # safety checks enabled
-test: src/test_main.c
+test: src/test_main.c src/liballoc.h
 	$(CC) $(SAFETY) -g --coverage src/test_main.c -o ./test
 
 clean:

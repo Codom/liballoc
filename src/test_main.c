@@ -5,6 +5,7 @@
  * Distributed under terms of the MIT license.
  */
 #include <stdio.h>
+#include <string.h>
 
 #define LIBALLOC_DEF
 #define INCLUDE_LIBC
@@ -48,11 +49,13 @@ void linear_allocator_test() {
 
     should_pass = la_malloc(linear_alloc, sizeof(int) * (1024/4 - 1));
     assert(should_pass);
+
+    // This will fail because there is not enough space to allocate 10 ints
     should_fail = la_realloc(linear_alloc, should_pass, sizeof(int)*10);
     assert(!should_fail);
 
     // Just 4 dat completion baby
-    la_free(linear_alloc, NULL);
+    la_free(linear_alloc, should_fail);
     
     la_linear_deinit(&linear_alloc);
 }
@@ -65,9 +68,42 @@ void basic_libc_usage_test() {
 }
 
 void arena_allocator_test() {
-    // TODO
-    // la_alloc_callbacks_t arena_allocator = la_arena_allocator(la_libc_allocator);
-    // la_arena_deinit(&arena_allocator);
+    // Basic usage test
+    la_alloc_callbacks_t arena_allocator = la_arena_allocator(la_libc_allocator);
+    int* should_pass = la_malloc(arena_allocator, sizeof(int) * 10);
+    assert(should_pass);
+    should_pass = la_realloc(arena_allocator, should_pass, sizeof(int) * 100);
+    assert(should_pass);
+    la_free(arena_allocator, should_pass);
+    la_arena_deinit(&arena_allocator);
+
+    // Bounds test
+    // These allocations are less than 4k and should fit in the same bin, as
+    // such they should all be adjacent
+    arena_allocator = la_arena_allocator(la_libc_allocator);
+    int* first_array = la_malloc(arena_allocator, sizeof(int) * 10);
+    int* middle_array = la_malloc(arena_allocator, sizeof(int) * 10);
+    int* end_array = la_malloc(arena_allocator, sizeof(int) * 10);
+
+    // Ensure no random passing because of uninit values
+    memset(first_array, 0xffffffff, 10);
+    memset(middle_array, 0xffffffff, 10);
+    memset(end_array, 0xffffffff, 10);
+
+    first_array[10] = 10;
+    assert(middle_array[0] == 10);
+    middle_array[10] = 10;
+    assert(end_array[0] == 10);
+
+    // This is a large allocation and should exist in it's own
+    // arena, and the out of bounds access shouldn't effect
+    // the large array
+    int* large_array = la_malloc(arena_allocator, sizeof(int) * 4096);
+    memset(large_array, 0xffffffff, 4096);
+    end_array[10] = 10;
+    assert(large_array[0] == 0xffffffff);
+
+    la_arena_deinit(&arena_allocator);
 }
 
 int main(int argc, char* argv[]) {

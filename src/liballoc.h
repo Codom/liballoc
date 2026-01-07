@@ -20,6 +20,18 @@
 
 #include <stddef.h>
 
+// ASan integration for custom allocator support
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+#define LIBALLOC_ASAN 1
+#include <sanitizer/asan_interface.h>
+#else
+#define ASAN_POISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
+#define ASAN_UNPOISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
+#endif
+
+// ASan requires 8-byte aligned regions for proper shadow byte tracking
+#define LA_ALIGN8(x) (((x) + 7) & ~7)
+
 typedef struct {
     void* (*malloc)(void*, size_t);
     void* (*realloc)(void*, void*, size_t);
@@ -61,7 +73,7 @@ void la_arena_deinit(la_alloc_callbacks_t* res);
 // Implementation below
 #ifdef LIBALLOC_DEF
 
-#define unreachable() printf("Hit unreachable in %s:%d\n", __FILE__, __LINE__); exit(1)
+#define la_unreachable() printf("Hit unreachable in %s:%d\n", __FILE__, __LINE__); exit(1)
 
 #ifdef DEBUG
 // TODO Figure out a nice way to annotate allocs and frees...
@@ -134,14 +146,21 @@ typedef struct {
 void* la_linear_malloc(void* _heap, size_t size) {
     la_linear_heap_t *heap = (la_linear_heap_t*) _heap;
 
+    // Align size for ASan shadow byte tracking
+    size_t aligned_size = LA_ALIGN8(size);
+
     // Fail if it cannot fit
-    if(heap->size + size >= heap->capacity) {
+    if(heap->size + aligned_size >= heap->capacity) {
         return NULL;
     }
 
     // Otherwise alloc
     void* ret = (_heap + heap->size + sizeof(la_linear_heap_t));
-    heap->size += size;
+    heap->size += aligned_size;
+
+    // Unpoison the allocated region so it can be accessed
+    ASAN_UNPOISON_MEMORY_REGION(ret, size);
+
     return ret;
 }
 
@@ -164,6 +183,9 @@ la_alloc_callbacks_t la_linear_allocator(la_alloc_callbacks_t root_allocator, si
     lin_heap->size = 0;
     lin_heap->capacity = heap_size;
 
+    // Poison the usable heap region - allocations will unpoison as needed
+    ASAN_POISON_MEMORY_REGION(heap + sizeof(la_linear_heap_t), heap_size);
+
     la_alloc_callbacks_t ret = {
         .malloc = la_linear_malloc,
         .realloc = la_linear_realloc,
@@ -175,6 +197,10 @@ la_alloc_callbacks_t la_linear_allocator(la_alloc_callbacks_t root_allocator, si
 
 void la_linear_deinit(la_alloc_callbacks_t *callbacks) {
     la_linear_heap_t* lin_heap = callbacks->heap;
+
+    // Unpoison the entire region before freeing to parent allocator
+    ASAN_UNPOISON_MEMORY_REGION(callbacks->heap + sizeof(la_linear_heap_t), lin_heap->capacity);
+
     la_free(lin_heap->parent_alloc, callbacks->heap);
 }
 
@@ -247,7 +273,7 @@ void* la_arena_malloc(void* _heap, size_t size) {
     }
 
     // Unreachable, force crash
-    unreachable();
+    la_unreachable();
 }
 
 // For linear allocators, the realloc function just calls it's
@@ -264,7 +290,7 @@ void la_arena_free(void* _heap, void* _ptr) {
 la_alloc_callbacks_t la_arena_allocator(la_alloc_callbacks_t parent) {
     la_arena_heap_t* heap = la_malloc(parent, sizeof(la_arena_heap_t));
     if(!heap) {
-        unreachable();
+        la_unreachable();
     }
     heap->parent_alloc = parent;
     heap->head = NULL;
@@ -286,6 +312,10 @@ void la_arena_deinit(la_alloc_callbacks_t* res) {
     while(p) {
         la_arena_t* next = p->next;
         la_linear_heap_t* lin_heap = p->bin;
+
+        // Unpoison the bin before freeing to parent allocator
+        ASAN_UNPOISON_MEMORY_REGION((void*)lin_heap + sizeof(la_linear_heap_t), lin_heap->capacity);
+
         la_free(lin_heap->parent_alloc, lin_heap);
         la_free(parent, p);
         p = next;
